@@ -1,17 +1,26 @@
 const { Telegraf, Markup } = require('telegraf');
 const dotenv = require('dotenv');
 const NodeCache = require('node-cache');
-const { Video } = require('./models/video'); // Assuming you have a Video model
+const { Video } = require('./models/video'); // Assuming you have a Video model please join 
 dotenv.config();
+
+// Debug: Check if token is loaded
+const token = process.env.TELEGRAM_BOT_TOKEN;
+if (!token) {
+    console.error('❌ ERROR: TELEGRAM_BOT_TOKEN is not set in .env file!');
+    process.exit(1);
+}
+console.log(`✅ Token loaded: ${token.substring(0, 10)}...${token.substring(token.length - 5)}`);
+
 const cache = new NodeCache({ stdTTL: 600 });
 const userCache = new NodeCache({ stdTTL: 300 });
 const { bytesToMB, truncateText } = require('./utils/videoUtils');
 const { deleteMessageAfter } = require('./utils/telegramUtils');
 const { storeVideoData, cleanCaption } = require('./utils/textUtils');
 const { performPuppeteerTask } = require('./utils/getAi');
-const { message } = require('telegram/client');
+
 const User = require('./models/user');
-// const scrap = require('./scraper/scrap');
+
 const saveUser = require('./utils/saveusers');
 const createMovieRequest = require('./utils/movierequest');
 const { isAdmin } = require('./helper/admincheck');
@@ -38,21 +47,24 @@ bot.start(async (ctx) => {
     const callbackData = message ? message.text : callbackQuery.data;
     saveUser(ctx);
     if (callbackData.startsWith('/start watch_')) {
-        // const chatMember = await ctx.telegram.getChatMember('@moviecastmovie', ctx.from.id);
-        const videoId = callbackData.split('_')[1]; // Extract video ID from the callback data
-
+        const videoId = callbackData.split('_')[1];
 
         try {
-
-            const chatMember = await ctx.telegram.getChatMember('@moviecast_movie', ctx.from.id);
-            const isMember = ['member', 'administrator', 'creator'].includes(chatMember.status);
+            let isMember = false;
+            try {
+                const chatMember = await ctx.telegram.getChatMember('@filmpuradda', ctx.from.id);
+                isMember = ['member', 'administrator', 'creator'].includes(chatMember.status);
+            } catch (memberCheckError) {
+                console.log('Group member check failed:', memberCheckError.message);
+                isMember = false;
+            }
 
             if (!isMember) {
                 const sentMessage = await ctx.reply(
-                    `🚀 <b>JOIN MOVIE-CAST-CHANNEL TO WATCH MOVIES</b> 🎥\n\n` +
-                    `📢 <i>Unlock premium movies and exclusive content by joining our channel!</i>\n\n` +
+                    `🚀 <b>JOIN FILMPURADDA GROUP TO WATCH MOVIES</b> 🎥\n\n` +
+                    `📢 <i>Unlock premium movies and exclusive content by joining our group!</i>\n\n` +
                     `🔹 <b>How to access:</b>\n` +
-                    `1️⃣ Click the "Join Channel" button below.\n` +
+                    `1️⃣ Click the "Join Group" button below.\n` +
                     `2️⃣ After joining retry.\n\n` +
                     `🔄 <b>Retry after joining!</b>`,
                     {
@@ -60,7 +72,7 @@ bot.start(async (ctx) => {
                         reply_markup: {
                             inline_keyboard: [
                                 [
-                                    { text: '✨ JOIN CHANNEL ✨', url: 'https://t.me/moviecast_movie' }
+                                    { text: '✨ JOIN GROUP ✨', url: 'https://t.me/filmpuradda' }
                                 ]
                             ]
                         }
@@ -68,88 +80,62 @@ bot.start(async (ctx) => {
                 );
 
                 if (sentMessage) {
-                    // Delete the message after 2 minutes
                     deleteMessageAfter(ctx, sentMessage.message_id, 120);
                 }
                 return;
             }
 
-            if (1 == 1) {
-                const cachedVideo = cache.get(videoId);
-                let video;
-                if (cachedVideo) {
-                    video = cachedVideo;
-                } else {
-                    video = await Video.findById(videoId);
-                    if (video) {
-                        cache.set(videoId, video);
-                    }
-                }
-
-                if (!video) {
-                    const sentMessage = await ctx.reply(`❌ Video with ID  '${videoId}' not found.`);
-                    if (sentMessage) {
-                        deleteMessageAfter(ctx, sentMessage.message_id, 120);
-                    }
-
-                    return;
-                }
-
-                // Add "Join ➥ @MovieCastAgainBot" to the end of the caption
-                const captionWithLink = `🎥 <b>${video.caption || "NOT AVAILABLE"}    📦 <b>SIZE:</b> ${bytesToMB(video.size)} </b>\n\n⚠️ <b>NOTE:</b> This video will be deleted in 5 minutes, so save or forward it.\n\n✨ <i>Join ➥</i> @moviecast_movie`;
-                // Send the video file to the user
-                const sentMessage = await ctx.replyWithVideo(video.fileId, {
-                    caption: `${captionWithLink}`,
-                    parse_mode: 'HTML',
-                    reply_markup: {
-                        inline_keyboard: [
-                            [
-                                { text: '▶️ Watch Movie', url: `https://t.me/moviecastmovie` }
-                            ]
-                        ]
-                    },
-                    disable_notification: false
-                });
-                sentMessage && deleteMessageAfter(ctx, sentMessage.message_id, 300); // Changed to 5 minutes
+            const cachedVideo = cache.get(videoId);
+            let video;
+            if (cachedVideo) {
+                video = cachedVideo;
             } else {
-                const sentMessage = await ctx.reply(
-                    `🚀 <b>JOIN</b> @MovieCastAgainBot <b>TO WATCH THIS VIDEO</b> 🎥\n\n📢 <i>Unlock premium movies and exclusive content!</i>`,
-                    {
-                        parse_mode: 'HTML',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [
-                                    {
-                                        text: '✨JOIN CHANNEL✨',
-                                        url: 'https://t.me/moviecast_movie',
-                                    },
-                                    // Retry button with directional and play emojis
-                                    {
-                                        text: '🔄Retry',
-                                        url: `https://t.me/${process.env.BOT_USERNAME}?start=watch_${videoId}`,
-                                    },
-                                ]
-                            ]
-                        }
-                    }
-                );
+                video = await Video.findById(videoId);
+                if (video) {
+                    cache.set(videoId, video);
+                }
+            }
+
+            if (!video) {
+                const sentMessage = await ctx.reply(`❌ Video with ID '${videoId}' not found.`);
                 if (sentMessage) {
                     deleteMessageAfter(ctx, sentMessage.message_id, 120);
                 }
+                return;
             }
+
+            const captionWithLink = `🎥 <b>${video.caption || "NOT AVAILABLE"}    📦 <b>SIZE:</b> ${bytesToMB(video.size)} </b>\n\n⚠️ <b>NOTE:</b> This video will be deleted in 5 minutes, so save or forward it.\n\n✨ <i>Join ➥</i> @filmpuradda`;
+            const sentMessage = await ctx.replyWithVideo(video.fileId, {
+                caption: `${captionWithLink}`,
+                parse_mode: 'HTML',
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: '▶️ Watch More', url: `https://t.me/filmpuradda` }
+                        ]
+                    ]
+                },
+                disable_notification: false
+            });
+            sentMessage && deleteMessageAfter(ctx, sentMessage.message_id, 300);
         } catch (error) {
             console.error(`Error fetching video with ID '${videoId}':`, error);
+
+            // Check if it's a file-related error (video might be deleted/expired)
+            const isFileError = error.message?.includes('file') || error.message?.includes('video');
+
             const sentMessage = await ctx.reply(
-                `⚠️ <b>Oops!</b> Something went wrong. 😟\n\n` +
-                `👇 <i>Your video is here 👇👇.</i>`,
+                isFileError
+                    ? `⚠️ <b>Video Unavailable</b> 😟\n\n<i>This video may have been deleted or is no longer available.</i>`
+                    : `⚠️ <b>Oops!</b> Something went wrong. 😟\n\n👇 <i>Please try again.</i>`,
                 {
                     parse_mode: 'HTML',
                     reply_markup: {
                         inline_keyboard: [
                             [
                                 {
-                                    text: '🔄 Click Here',
-                                    url: `https://t.me/Filmmela1bot?start=watch_${videoId}`,
+                                    text: '🔄 Try Again',
+                                    url: `https://t.me/${process.env.BOT_USERNAME}?start=watch_${videoId}`,
                                 },
                             ]
                         ]
@@ -162,14 +148,13 @@ bot.start(async (ctx) => {
         }
     } else {
         const sentMessage = await ctx.reply(
-            `🎬 <b>Welcome to Movie-Cast Bot!</b> 🎥\n\n🌟 <i>Your gateway to amazing movies and entertainment.</i>\n\n👇 Explore now!`,
+            `🎬 <b>Welcome to Filmpuradda Bot!</b> 🎥\n\n🌟 <i>Your gateway to amazing movies and entertainment.</i>\n\n👇 Explore now!`,
             {
                 parse_mode: 'HTML',
                 reply_markup: {
                     inline_keyboard: [
                         [
-                            { text: '🌐 Updates ', url: 'https://t.me/moviecast_movie' },
-                            { text: '🎞️ View Movies', url: 'https://t.me/moviecastmovie' }
+                            { text: '🌐 Join Group', url: 'https://t.me/filmpuradda' }
                         ]
                     ]
                 }
@@ -177,10 +162,8 @@ bot.start(async (ctx) => {
         );
 
         if (sentMessage) {
-            // Delete the message after 2 minutes
-            deleteMessageAfter(ctx, sentMessage ? sentMessage.message_id : callbackQuery.sentMessage.message_id, 30);
+            deleteMessageAfter(ctx, sentMessage.message_id, 30);
         }
-
     }
 });
 
@@ -236,43 +219,6 @@ bot.command('getusers', async (ctx) => {
     }
 });
 
-// Broadcast message to all users (Admins only)
-// bot.command('broadcast', async (ctx) => {
-
-//     // Fancy response message
-//     if (!isAdmin(ctx)) {
-//         const sentMessage = await ctx.reply(
-//             `🚫 <b>Access Denied!</b>\n\n` +
-//             `❌ <i>Sorry, you are not authorized to use this command.</i>`,
-//             { parse_mode: 'HTML' }
-//         );
-//         sentMessage && deleteMessageAfter(ctx, sentMessage.message_id, 3);
-//         return;
-//     }
-
-//     const message = ctx.message.text.split(' ').slice(1).join(' ');
-//     if (!message) {
-//         await ctx.reply('Please provide a message to broadcast.');
-//         return;
-//     }
-
-//     try {
-//         const allUsers = await User.find({});
-//         for (const user of allUsers) {
-//             try {
-//                 await ctx.telegram.sendMessage(user.userId, message, { parse_mode: 'HTML' });
-//             } catch (error) {
-//                 console.error(`Failed to send message to user ${user.userId}:`, error);
-//             }
-//         }
-//     } catch (error) {
-//         console.error('Error fetching users:', error);
-//         await ctx.reply('⚠️ Failed to fetch users. Please try again later.');
-//     }
-
-//     await ctx.reply('Broadcast message sent to all users.');
-// });
-
 bot.command('aichat', async (ctx) => {
 
     // Fancy response message
@@ -314,7 +260,6 @@ bot.command('aichat', async (ctx) => {
     }
 });
 
-// Define the /rule command with retry and error handling
 bot.command('rule', async (ctx) => {
     try {
         const rules = `
@@ -343,14 +288,12 @@ bot.command('rule', async (ctx) => {
 
 ◉ *Don't request anything other than movies, series, or anime.*
 
-_Maintained by -_ [@moviecastmovie]
+_Maintained by -_ [@filmpuradda]
 `;
-        // Attempt to send the message
         await ctx.replyWithMarkdown(rules);
     } catch (error) {
-        // Log and handle the error
         console.error('Failed to send rules:', error.message);
-        ctx.reply('⚠️ Sorry, an error occurred while sending the rules. Please try again later.', error.message);
+        ctx.reply('⚠️ Sorry, an error occurred while sending the rules. Please try again later.');
     }
 });
 
@@ -390,7 +333,7 @@ bot.command("totalmovies", async (ctx) => {
             reply_markup: {
                 inline_keyboard: [
                     [
-                        { text: "🌟 Explore Movies 🌟", url: "https://yourwebsite.com/movies" }
+                        { text: "🌟 Explore Movies 🌟", url: "https://t.me/filmpuradda" }
                     ]
                 ]
             }
@@ -402,25 +345,6 @@ bot.command("totalmovies", async (ctx) => {
 
 });
 
-// bot.command("scrap", async (ctx) => {
-//     try {
-//         const args = ctx.message.text.split(" ");
-//         const [_, scrapFromChannel, sendToChannel, startFrom, noOfvideos] = args;
-
-//         if (!scrapFromChannel || !sendToChannel) {
-//             await ctx.reply("⚠️ Please provide both source and destination channels. Example: /scrap <source_channel> <destination_channel>");
-//             return;
-//         }
-//         console.log(scrapFromChannel, sendToChannel, startFrom, noOfvideos)
-//         console.log(`Scraping from: ${scrapFromChannel}, Sending to: ${sendToChannel}`);
-//         await scrap(ctx, scrapFromChannel, sendToChannel, noOfvideos, startFrom);
-
-//         await ctx.reply("✅ Scraping started. Check logs for progress.");
-//     } catch (error) {
-//         console.error("Error executing scrap command:", error);
-//         await ctx.reply("⚠️ Failed to execute scrap command. Please try again later.");
-//     }
-// });
 
 
 bot.on("video", async (ctx) => {
@@ -473,7 +397,6 @@ bot.on("video", async (ctx) => {
 
 
 bot.hears(/.*/, async (ctx) => {
-    console.log('jo');
     const movieName = ctx.message.text.trim();
     const username = ctx.from.first_name || ctx.from.username || "user";
 
@@ -638,7 +561,7 @@ bot.action(/prev_(\d+)_(.+)/, async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// Generate Pagination Buttons
+// Generate Pagination Buttons - using callback buttons to send video in group
 const generateButtons = (videos, page, totalPages, cleanMovieName) => {
     const maxButtonsPerPage = 8;
     const startIndex = (page - 1) * maxButtonsPerPage;
@@ -646,11 +569,10 @@ const generateButtons = (videos, page, totalPages, cleanMovieName) => {
 
     const buttons = videos.slice(startIndex, endIndex).map(video => {
         const sizeMB = bytesToMB(video.size);
-        const truncatedCaption = truncateText(video.caption, 30); // Truncate the caption to 30 characters
-        const videoLink = `https://t.me/${process.env.BOT_USERNAME}?start=watch_${video._id}`;
+        const truncatedCaption = truncateText(video.caption, 30);
 
         return [
-            Markup.button.url(`${truncatedCaption} ${sizeMB ? `📦 [${sizeMB}]` : ''}`, videoLink),
+            Markup.button.callback(`${truncatedCaption} ${sizeMB ? `📦 [${sizeMB}]` : ''}`, `watch_${video._id}`),
         ];
     });
 
@@ -670,11 +592,106 @@ const generateButtons = (videos, page, totalPages, cleanMovieName) => {
     return buttons;
 };
 
+// Handle video selection - send video directly in the group
+bot.action(/watch_(.+)/, async (ctx) => {
+    const videoId = ctx.match[1];
+
+    try {
+        // Check if user is a member of filmpuradda group
+        let isMember = false;
+        try {
+            const chatMember = await ctx.telegram.getChatMember('@filmpuradda', ctx.from.id);
+            isMember = ['member', 'administrator', 'creator'].includes(chatMember.status);
+        } catch (memberCheckError) {
+            console.log('Group member check failed:', memberCheckError.message);
+            isMember = false;
+        }
+
+        // If not a member, ask to join
+        if (1 != 1) {
+            await ctx.answerCbQuery('❌ Please join @filmpuradda first!', { show_alert: true });
+            const sentMessage = await ctx.reply(
+                `🚀 <b>JOIN FILMPURADDA GROUP TO WATCH MOVIES</b> 🎥\n\n` +
+                `📢 <i>Unlock premium movies and exclusive content by joining our group!</i>\n\n` +
+                `🔹 <b>How to access:</b>\n` +
+                `1️⃣ Click the "Join Group" button below.\n` +
+                `2️⃣ After joining, click the movie again.\n\n` +
+                `🔄 <b>Retry after joining!</b>`,
+                {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                { text: '✨ JOIN GROUP ✨', url: 'https://t.me/filmpuradda' }
+                            ]
+                        ]
+                    }
+                }
+            );
+            if (sentMessage) {
+                deleteMessageAfter(ctx, sentMessage.message_id, 60);
+            }
+            return;
+        }
+
+        // User is a member, send the video directly in the group
+        const cachedVideo = cache.get(videoId);
+        let video;
+        if (cachedVideo) {
+            video = cachedVideo;
+        } else {
+            video = await Video.findById(videoId);
+            if (video) {
+                cache.set(videoId, video);
+            }
+        }
+
+        if (!video) {
+            await ctx.answerCbQuery('❌ Video not found!', { show_alert: true });
+            return;
+        }
+
+        await ctx.answerCbQuery('📤 Sending video...');
+
+        const captionWithLink = `🎥 <b>${video.caption || "NOT AVAILABLE"}</b>    📦 <b>SIZE:</b> ${bytesToMB(video.size)}\n\n⚠️ <b>NOTE:</b> This video will be deleted in 5 minutes, so save or forward it.\n\n✨ <i>Join ➥</i> @filmpuradda`;
+
+        const sentMessage = await ctx.replyWithVideo(video.fileId, {
+            caption: captionWithLink,
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '▶️ Watch More', url: 'https://t.me/filmpuradda' }
+                    ]
+                ]
+            },
+            disable_notification: false
+        });
+
+        if (sentMessage) {
+            deleteMessageAfter(ctx, sentMessage.message_id, 300);
+        }
+
+    } catch (error) {
+        console.error(`Error sending video with ID '${videoId}':`, error);
+        await ctx.answerCbQuery('⚠️ Something went wrong. Try again!', { show_alert: true });
+    }
+});
 
 
-// bot.launch().then(() => {
-//     console.log('Bot started');
-// });
+
+// Auto-detect environment: Use polling locally, webhooks in production
+if (process.env.NODE_ENV !== 'production') {
+    bot.launch().then(() => {
+        console.log('🤖 Bot started in POLLING mode (local development)');
+    });
+
+    // Graceful shutdown for local dev
+    process.once('SIGINT', () => bot.stop('SIGINT'));
+    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+} else {
+    console.log('🌐 Bot running in WEBHOOK mode (production)');
+}
 
 // Catch Telegraf errors
 bot.catch((err, ctx) => {

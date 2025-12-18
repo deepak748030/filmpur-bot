@@ -19,10 +19,15 @@ app.get('/', (req, res) => {
     res.send('Server started');
 });
 
-// Initialize bot webhook
+// Initialize bot webhook (only used in production)
 const path = `/api/telegram-bot`;
 app.post(path, (req, res) => {
     bot.handleUpdate(req.body, res);
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', mode: process.env.NODE_ENV === 'production' ? 'webhook' : 'polling' });
 });
 
 

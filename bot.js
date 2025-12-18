@@ -39,87 +39,6 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN, {
     }
 });
 
-// Levenshtein distance for fuzzy matching
-function levenshteinDistance(str1, str2) {
-    const m = str1.length;
-    const n = str2.length;
-    const dp = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
-
-    for (let i = 0; i <= m; i++) dp[i][0] = i;
-    for (let j = 0; j <= n; j++) dp[0][j] = j;
-
-    for (let i = 1; i <= m; i++) {
-        for (let j = 1; j <= n; j++) {
-            if (str1[i - 1] === str2[j - 1]) {
-                dp[i][j] = dp[i - 1][j - 1];
-            } else {
-                dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-            }
-        }
-    }
-    return dp[m][n];
-}
-
-// Calculate similarity score between query and title
-function calculateSimilarity(query, title) {
-    const q = query.toLowerCase().trim();
-    const t = title.toLowerCase().trim();
-
-    // Exact match - highest score
-    if (t === q || t.includes(q)) return 100;
-
-    // Query contains title - high score  
-    if (q.includes(t)) return 90;
-
-    // Word-based matching
-    const queryWords = q.split(/\s+/);
-    const titleWords = t.split(/\s+/);
-
-    let wordMatchScore = 0;
-    let matchedWords = 0;
-
-    for (const qWord of queryWords) {
-        if (qWord.length < 2) continue;
-
-        for (const tWord of titleWords) {
-            if (tWord.length < 2) continue;
-
-            // Exact word match
-            if (tWord === qWord) {
-                wordMatchScore += 30;
-                matchedWords++;
-            } else if (tWord.includes(qWord) || qWord.includes(tWord)) {
-                // Partial match
-                wordMatchScore += 20;
-                matchedWords++;
-            } else {
-                // Fuzzy word matching using Levenshtein distance
-                const distance = levenshteinDistance(qWord, tWord);
-                const maxLen = Math.max(qWord.length, tWord.length);
-                const similarity = 1 - (distance / maxLen);
-
-                // Accept if 60%+ similar (e.g., "dhurandar" vs "dhurandhar")
-                if (similarity >= 0.6) {
-                    wordMatchScore += similarity * 25;
-                    matchedWords++;
-                }
-            }
-        }
-    }
-
-    // Bonus for matching multiple words
-    if (matchedWords > 1) {
-        wordMatchScore += matchedWords * 5;
-    }
-
-    // Overall fuzzy matching as fallback
-    const distance = levenshteinDistance(q, t);
-    const maxLen = Math.max(q.length, t.length);
-    const fuzzyScore = (1 - (distance / maxLen)) * 40;
-
-    return Math.min(100, wordMatchScore + fuzzyScore);
-}
-
 // Middleware: Block non-admin users in private chats (personal bot chat)
 // Group chats remain unaffected
 bot.use(async (ctx, next) => {
@@ -520,30 +439,36 @@ bot.hears(/.*/, async (ctx) => {
 
         // Clean and prepare movie name for regex search
         const cleanMovieName = movieName.replace(/[^\w\s]/gi, "").replace(/\s\s+/g, " ").trim();
+        const searchPattern = cleanMovieName.split(/\s+/).map(word => `(?=.*${word})`).join("");
+        const regex = new RegExp(`${searchPattern}`, "i");
 
         const cacheKey = `videos_${cleanMovieName.toLowerCase()}`;
         let matchingVideos = cache.get(cacheKey);
 
         // Fetch videos if not in cache
         if (!matchingVideos) {
-            // Get all videos for fuzzy matching
-            const allVideos = await Video.find({
+            matchingVideos = await Video.find({
+                caption: { $regex: regex },
                 size: { $gte: 50 * 1024 * 1024 } // Ensure size is at least 50MB
             });
 
-            // Fuzzy search with similarity scoring
-            const scoredVideos = allVideos.map(video => {
-                const caption = (video.caption || '').toLowerCase();
-                const query = cleanMovieName.toLowerCase();
-                const score = calculateSimilarity(query, caption);
-                return { video, score };
-            });
+            // Sort the videos using JavaScript
+            matchingVideos.sort((a, b) => {
+                const qualityOrder = [
+                    '4k', 'webdl', 'bluray', 'hdrip', 'webrip', 'hevc',
+                    '720p', 'hdtv', 'hdtc', 'dvdscr', 'dvdrip',
+                    'camrip', 'ts', 'hdts', 'hdcam',
+                    'screener', 'tvrip', 'vhsrip', 'workprint'
+                ];
+                const qualityA = qualityOrder.indexOf(a.quality);
+                const qualityB = qualityOrder.indexOf(b.quality);
 
-            // Filter videos with minimum similarity (25%) and sort by score (best first)
-            matchingVideos = scoredVideos
-                .filter(item => item.score >= 25)
-                .sort((a, b) => b.score - a.score) // Best matches first
-                .map(item => item.video);
+                if (qualityA !== qualityB) {
+                    return qualityA - qualityB;
+                }
+
+                return a.caption.localeCompare(b.caption);
+            });
 
             // Format captions to replace season and episode numbers
             matchingVideos = matchingVideos.map(video => {
@@ -555,10 +480,16 @@ bot.hears(/.*/, async (ctx) => {
             cache.set(cacheKey, matchingVideos);
         }
 
-        // If no videos found, silently save request and return (no message)
         if (matchingVideos.length === 0) {
+            await ctx.reply(
+                `❌ <b>Sorry, ${username}!</b>\n` +
+                `🎥 No videos found matching your search for "<i>${movieName}</i>".`,
+                { parse_mode: "HTML", reply_to_message_id: ctx.message.message_id }
+            );
+            // Save the movie request to MongoDB
             createMovieRequest(ctx.from.username, movieName);
-            return; // No "0 videos found" message - just return silently
+
+
         }
 
         const totalPages = Math.ceil(matchingVideos.length / 8);

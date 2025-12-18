@@ -39,6 +39,21 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN, {
     }
 });
 
+// Middleware: Block non-admin users in private chats (personal bot chat)
+// Group chats remain unaffected
+bot.use(async (ctx, next) => {
+    // Check if it's a private chat (personal/direct message to bot)
+    if (ctx.chat && ctx.chat.type === 'private') {
+        // Only allow admin users in private chats
+        if (!isAdmin(ctx)) {
+            // Silently ignore non-admin users in private chat - no reply
+            return;
+        }
+    }
+    // For group chats or admin users, continue to next handler
+    return next();
+});
+
 
 // Handle /start command with specific video ID
 bot.start(async (ctx) => {
